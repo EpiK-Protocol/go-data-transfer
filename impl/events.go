@@ -380,7 +380,11 @@ func (m *manager) restartRequest(chid datatransfer.ChannelID,
 			return result, err
 		}
 	}
-	log.Infof("restartRequest (return): result %s, err %w", result.Type(), voucherErr)
+	if result == nil {
+		log.Infof("restartRequest (return err): %w", voucherErr)
+	} else {
+		log.Infof("restartRequest (return): result %s, err %w", result.Type(), voucherErr)
+	}
 	return result, voucherErr
 }
 
