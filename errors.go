@@ -39,3 +39,6 @@ const ErrDisconnected = errorType("other peer appears to have hung up. restart C
 
 // ErrRemoved indicates the channel was inactive long enough that it was put in a permaneant error state
 const ErrRemoved = errorType("channel removed due to inactivity")
+
+// ErrExceedServeLimit indicates too many request in progress
+const ErrExceedServeLimit = errorType("exceed serve limit")

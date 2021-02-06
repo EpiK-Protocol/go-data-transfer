@@ -387,6 +387,35 @@ func (m *manager) acceptRequest(
 		return nil, err
 	}
 
+	if incoming.IsPull() {
+		css, err := m.channels.InProgress()
+		if err != nil {
+			return nil, err
+		}
+		totalSendPull := 0
+		ongoingServePull := 0
+		otherServePull := 0
+		for _, cs := range css {
+			if cs.IsPull() {
+				if cs.Sender() == m.peerID {
+					if cs.Status() == datatransfer.Ongoing || cs.Status() == datatransfer.Requested {
+						ongoingServePull++
+						continue
+					}
+					otherServePull++
+					continue
+				}
+				totalSendPull++
+				continue
+			}
+		}
+		log.Infof("check pull limit %d (total channels %d): ongoing serve %d (others %d), send %d", m.maxServePullNum, len(css),
+			ongoingServePull, otherServePull, totalSendPull)
+		if ongoingServePull >= m.maxServePullNum {
+			return nil, datatransfer.ErrExceedServeLimit
+		}
+	}
+
 	voucher, result, err := m.validateVoucher(initiator, incoming, incoming.IsPull(), incoming.BaseCid(), stor)
 	if err != nil && err != datatransfer.ErrPause {
 		return result, err

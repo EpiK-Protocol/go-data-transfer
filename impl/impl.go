@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"sync"
 	"time"
 
@@ -48,6 +49,8 @@ type manager struct {
 	cidLists              cidlists.CIDLists
 	pushChannelMonitor    *pushchannelmonitor.Monitor
 	pushChannelMonitorCfg *pushchannelmonitor.Config
+
+	maxServePullNum int
 }
 
 type internalEvent struct {
@@ -119,6 +122,17 @@ func PushChannelRestartConfig(
 	}
 }
 
+func MaxServePullNumOpt(limit int) DataTransferOption {
+	return func(m *manager) {
+		if limit <= 0 {
+			log.Warnf("Non-positive max serve pull num: %d", limit)
+			return
+		}
+		m.maxServePullNum = limit
+		log.Infof("Setting max serve pull num to %d", limit)
+	}
+}
+
 const defaultChannelRemoveTimeout = 1 * time.Hour
 
 // NewDataTransfer initializes a new instance of a data transfer manager
@@ -136,6 +150,8 @@ func NewDataTransfer(ds datastore.Batching, cidListsDir string, dataTransferNetw
 		storedCounter:        storedCounter,
 		channelRemoveTimeout: defaultChannelRemoveTimeout,
 		reconnects:           make(map[datatransfer.ChannelID]chan struct{}),
+
+		maxServePullNum: runtime.NumCPU() * 2,
 	}
 
 	cidLists, err := cidlists.NewCIDLists(cidListsDir)
@@ -261,18 +277,25 @@ func (m *manager) OpenPullDataChannel(ctx context.Context, requestTo peer.ID, vo
 	if err != nil {
 		return datatransfer.ChannelID{}, err
 	}
+	log.Infof("OpenPullDataChannel (create): to %s, transfer id %d", requestTo, req.TransferID())
 	// initiator = us, sender = them, receiver = us
 	chid, err := m.channels.CreateNew(m.peerID, req.TransferID(), baseCid, selector, voucher,
 		m.peerID, requestTo, m.peerID)
 	if err != nil {
 		return chid, err
 	}
+
+	log.Infof("OpenPullDataChannel (configure): channel id %s, voucher type %s", chid.String(), voucher.Type())
 	processor, has := m.transportConfigurers.Processor(voucher.Type())
 	if has {
 		transportConfigurer := processor.(datatransfer.TransportConfigurer)
 		transportConfigurer(chid, voucher, m.transport)
 	}
+
+	log.Infof("OpenPullDataChannel (protect): to peer %s, channel id %s", requestTo, chid.String())
 	m.dataTransferNetwork.Protect(requestTo, chid.String())
+
+	log.Infof("OpenPullDataChannel (open): to peer %s, channel id %s", requestTo, chid.String())
 	if err := m.transport.OpenChannel(ctx, requestTo, chid, cidlink.Link{Cid: baseCid}, selector, nil, req); err != nil {
 		err = fmt.Errorf("Unable to send request: %w", err)
 		_ = m.channels.Error(chid, err)
