@@ -338,7 +338,7 @@ func (m *manager) restartRequest(chid datatransfer.ChannelID,
 	if m.peerID == initiator {
 		return nil, xerrors.New("initiator cannot be manager peer for a restart request")
 	}
-
+	log.Infof("restartRequest (validate req): initiator %s, chid %s", initiator, chid.String())
 	if err := m.validateRestartRequest(context.Background(), initiator, chid, incoming); err != nil {
 		return nil, err
 	}
@@ -348,6 +348,7 @@ func (m *manager) restartRequest(chid datatransfer.ChannelID,
 		return nil, err
 	}
 
+	log.Infof("restartRequest (validate voucher): is pull %t", incoming.IsPull())
 	voucher, result, err := m.validateVoucher(initiator, incoming, incoming.IsPull(), incoming.BaseCid(), stor)
 	if err != nil && err != datatransfer.ErrPause {
 		return result, xerrors.Errorf("failed to validate voucher: %w", err)
@@ -355,19 +356,23 @@ func (m *manager) restartRequest(chid datatransfer.ChannelID,
 	voucherErr := err
 
 	if result != nil {
+		log.Infof("restartRequest (new voucher result): result %s", result.Type())
 		err := m.channels.NewVoucherResult(chid, result)
 		if err != nil {
 			return result, err
 		}
 	}
+	log.Infof("restartRequest (restart)")
 	if err := m.channels.Restart(chid); err != nil {
 		return result, err
 	}
+	log.Infof("restartRequest (cfg transport): %s", voucher.Type())
 	processor, has := m.transportConfigurers.Processor(voucher.Type())
 	if has {
 		transportConfigurer := processor.(datatransfer.TransportConfigurer)
 		transportConfigurer(chid, voucher, m.transport)
 	}
+	log.Infof("restartRequest (protect)")
 	m.dataTransferNetwork.Protect(initiator, chid.String())
 	if voucherErr == datatransfer.ErrPause {
 		err := m.channels.PauseResponder(chid)
@@ -375,6 +380,7 @@ func (m *manager) restartRequest(chid datatransfer.ChannelID,
 			return result, err
 		}
 	}
+	log.Infof("restartRequest (return): result %s, err %w", result.Type(), voucherErr)
 	return result, voucherErr
 }
 
