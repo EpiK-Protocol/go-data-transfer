@@ -277,25 +277,18 @@ func (m *manager) OpenPullDataChannel(ctx context.Context, requestTo peer.ID, vo
 	if err != nil {
 		return datatransfer.ChannelID{}, err
 	}
-	log.Infof("OpenPullDataChannel (create): to %s, transfer id %d", requestTo, req.TransferID())
 	// initiator = us, sender = them, receiver = us
 	chid, err := m.channels.CreateNew(m.peerID, req.TransferID(), baseCid, selector, voucher,
 		m.peerID, requestTo, m.peerID)
 	if err != nil {
 		return chid, err
 	}
-
-	log.Infof("OpenPullDataChannel (configure): channel id %s, voucher type %s", chid.String(), voucher.Type())
 	processor, has := m.transportConfigurers.Processor(voucher.Type())
 	if has {
 		transportConfigurer := processor.(datatransfer.TransportConfigurer)
 		transportConfigurer(chid, voucher, m.transport)
 	}
-
-	log.Infof("OpenPullDataChannel (protect): to peer %s, channel id %s", requestTo, chid.String())
 	m.dataTransferNetwork.Protect(requestTo, chid.String())
-
-	log.Infof("OpenPullDataChannel (open): to peer %s, channel id %s", requestTo, chid.String())
 	if err := m.transport.OpenChannel(ctx, requestTo, chid, cidlink.Link{Cid: baseCid}, selector, nil, req); err != nil {
 		err = fmt.Errorf("Unable to send request: %w", err)
 		_ = m.channels.Error(chid, err)

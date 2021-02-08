@@ -338,7 +338,7 @@ func (m *manager) restartRequest(chid datatransfer.ChannelID,
 	if m.peerID == initiator {
 		return nil, xerrors.New("initiator cannot be manager peer for a restart request")
 	}
-	log.Infof("restartRequest (validate req): initiator %s, chid %s", initiator, chid.String())
+
 	if err := m.validateRestartRequest(context.Background(), initiator, chid, incoming); err != nil {
 		return nil, err
 	}
@@ -347,8 +347,6 @@ func (m *manager) restartRequest(chid datatransfer.ChannelID,
 	if err != nil {
 		return nil, err
 	}
-
-	log.Infof("restartRequest (validate voucher): is pull %t", incoming.IsPull())
 	voucher, result, err := m.validateVoucher(initiator, incoming, incoming.IsPull(), incoming.BaseCid(), stor)
 	if err != nil && err != datatransfer.ErrPause {
 		return result, xerrors.Errorf("failed to validate voucher: %w", err)
@@ -356,23 +354,19 @@ func (m *manager) restartRequest(chid datatransfer.ChannelID,
 	voucherErr := err
 
 	if result != nil {
-		log.Infof("restartRequest (new voucher result): result %s", result.Type())
 		err := m.channels.NewVoucherResult(chid, result)
 		if err != nil {
 			return result, err
 		}
 	}
-	log.Infof("restartRequest (restart)")
 	if err := m.channels.Restart(chid); err != nil {
 		return result, err
 	}
-	log.Infof("restartRequest (cfg transport): %s", voucher.Type())
 	processor, has := m.transportConfigurers.Processor(voucher.Type())
 	if has {
 		transportConfigurer := processor.(datatransfer.TransportConfigurer)
 		transportConfigurer(chid, voucher, m.transport)
 	}
-	log.Infof("restartRequest (protect)")
 	m.dataTransferNetwork.Protect(initiator, chid.String())
 	if voucherErr == datatransfer.ErrPause {
 		err := m.channels.PauseResponder(chid)
@@ -381,9 +375,9 @@ func (m *manager) restartRequest(chid datatransfer.ChannelID,
 		}
 	}
 	if result == nil {
-		log.Infof("restartRequest (return err): %w", voucherErr)
+		log.Debugf("restart channel %s: %w", chid, voucherErr)
 	} else {
-		log.Infof("restartRequest (return): result %s, err %w", result.Type(), voucherErr)
+		log.Debugf("restart channel %s: result type %s, err %w", chid, result.Type(), voucherErr)
 	}
 	return result, voucherErr
 }
@@ -397,33 +391,35 @@ func (m *manager) acceptRequest(
 		return nil, err
 	}
 
-	if incoming.IsPull() {
-		css, err := m.channels.InProgress()
-		if err != nil {
-			return nil, err
+	css, err := m.channels.InProgress()
+	if err != nil {
+		return nil, err
+	}
+	totalChs := len(css)
+	totalPushes := 0
+	serveOngoingPulls := 0
+	serveOtherPulls := 0
+	myselfPulls := 0
+	for _, cs := range css {
+		if !cs.IsPull() {
+			totalPushes++
+			continue
 		}
-		totalSendPull := 0
-		ongoingServePull := 0
-		otherServePull := 0
-		for _, cs := range css {
-			if cs.IsPull() {
-				if cs.Sender() == m.peerID {
-					if cs.Status() == datatransfer.Ongoing || cs.Status() == datatransfer.Requested {
-						ongoingServePull++
-						continue
-					}
-					otherServePull++
-					continue
-				}
-				totalSendPull++
-				continue
+		if cs.Sender() == m.peerID {
+			if cs.Status() == datatransfer.Ongoing || cs.Status() == datatransfer.Requested {
+				serveOngoingPulls++
+			} else {
+				serveOtherPulls++
 			}
+		} else {
+			myselfPulls++
 		}
-		log.Infof("check pull limit %d (total channels %d): ongoing serve %d (others %d), send %d", m.maxServePullNum, len(css),
-			ongoingServePull, otherServePull, totalSendPull)
-		if ongoingServePull >= m.maxServePullNum {
-			return nil, datatransfer.ErrExceedServeLimit
-		}
+	}
+	log.Debugf("channel stats: total %d, push %d, serve pull %d (limit %d, ongoing %d, other %d), myself pull %d",
+		totalChs, totalPushes, totalChs-totalPushes-myselfPulls, m.maxServePullNum, serveOngoingPulls, serveOtherPulls, myselfPulls)
+
+	if incoming.IsPull() && serveOngoingPulls >= m.maxServePullNum {
+		return nil, datatransfer.ErrExceedServeLimit
 	}
 
 	voucher, result, err := m.validateVoucher(initiator, incoming, incoming.IsPull(), incoming.BaseCid(), stor)
